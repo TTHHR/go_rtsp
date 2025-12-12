@@ -98,9 +98,6 @@ func (r *H265FileReader) ReadNextNALU() (*H265NALU, error) {
 		}
 		// 我们已经读了一个 0x00，所以要判断的是：我们刚读的 0x00 + peek 是否构成 startcode
 		if peek[0] == 0x00 && peek[1] == 0x01 {
-			// 情况：刚读的 0x00 + peek[0]==0x00? 这里表明实际是 00 01（不合法），一般不会
-			// 为稳健起见，不认为是 start code，继续循环
-			// 回退 peek 不需要，因为 peek 没有消耗
 			continue
 		}
 		// 现在检查 3 字节 start code (00 00 01)
@@ -137,7 +134,6 @@ func (r *H265FileReader) ReadNextNALU() (*H265NALU, error) {
 		// 否则继续搜索
 	}
 
-	// 现在 reader 游标在 startcode 之后的位置（即第一个 NAL 的第一个字节）
 	// 读取直到下一个 start code 为止
 	var data []byte
 	for {

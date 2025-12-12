@@ -16,7 +16,6 @@ import (
 	"github.com/tthhr/go_rtsp/utils"
 )
 
-// StreamContext 用于隔离每个流的状态
 type StreamContext struct {
 	Path       string
 	Packetizer *rtp.RTPPacketizer
@@ -28,9 +27,8 @@ type StreamContext struct {
 
 var (
 	serverInstance *api.ServerAPI
-	// streams 用于存储所有活跃的流上下文： path -> *StreamContext
-	streams   map[string]*StreamContext
-	streamsMu sync.RWMutex
+	streams        map[string]*StreamContext
+	streamsMu      sync.RWMutex
 )
 
 //export InitRTSPServer
@@ -108,24 +106,15 @@ func PushH265Frame(path *C.uchar, pathlen C.int, data *C.uchar, length C.int, ti
 		return
 	}
 
-	// 3. 锁定该流的 Context 进行处理
-	// 使用细粒度锁，避免阻塞其他流的推流
 	ctx.Mutex.Lock()
 	defer ctx.Mutex.Unlock()
-
-	// 执行切分 (splitNALUs 是纯函数，无需改动)
 	nalus := splitNALUs(rawBytes)
 
-	// 逐个发送，调用 Context 的方法而不是全局函数
 	for i, nalu := range nalus {
 		isLast := (i == len(nalus)-1)
 		ctx.processAndSendNALU(nalu, uint32(timestamp), isLast, false)
 	}
 }
-
-// -------------------------------------------------------------------
-// StreamContext 的方法 (替代原来的全局函数)
-// -------------------------------------------------------------------
 
 func (ctx *StreamContext) processAndSendNALU(data []byte, ts uint32, isLastNALU bool, skipCompensation bool) {
 	if len(data) < 2 {
@@ -147,7 +136,6 @@ func (ctx *StreamContext) processAndSendNALU(data []byte, ts uint32, isLastNALU 
 		copy(ctx.CachedPPS, data)
 	}
 
-	// 关键帧补偿逻辑 (使用 Context 内的缓存)
 	if (nalType >= 19 && nalType <= 21) && !skipCompensation {
 		if len(ctx.CachedVPS) > 0 {
 			ctx.sendInternal(ctx.CachedVPS, ts, false)
@@ -167,8 +155,6 @@ func (ctx *StreamContext) sendInternal(data []byte, ts uint32, useMarker bool) {
 	// 使用 Context 自己的打包器
 	packets := ctx.Packetizer.PacketizeH265NALU(data, ts)
 
-	// 拼接完整的 RTP 路径，例如 "test/streamid=0"
-	// 注意：这里的 Path 应该是 cleanPath，无需手动加斜杠，除非你的 Server 逻辑特殊
 	fullPath := ctx.Path
 
 	if !useMarker && len(packets) > 0 {
@@ -186,10 +172,6 @@ func (ctx *StreamContext) sendInternal(data []byte, ts uint32, useMarker bool) {
 		time.Sleep(1 * time.Microsecond)
 	}
 }
-
-// -------------------------------------------------------------------
-// 工具函数 (保持不变)
-// -------------------------------------------------------------------
 
 func splitNALUs(data []byte) [][]byte {
 	var nalus [][]byte

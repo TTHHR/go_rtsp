@@ -127,7 +127,6 @@ func simulateVideoStream(server *api.ServerAPI, path string, filepath string) {
 	}
 }
 
-// 提取一个发送函数，避免重复代码
 func sendNalu(server *api.ServerAPI, packetizer *rtp.RTPPacketizer, path string, data []byte, timestamp uint32) {
 	packets := packetizer.PacketizeH265NALU(data, timestamp)
 	for i, pkt := range packets {
