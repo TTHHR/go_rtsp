@@ -1,0 +1,105 @@
+package api
+
+import (
+	"fmt"
+	"sync"
+
+	"github.com/tthhr/go_rtsp/net/rtsp"
+	"github.com/tthhr/go_rtsp/utils"
+)
+
+type ServerConfig struct {
+	RTSPPort   int
+	BufferSize int
+	MaxClients int
+}
+
+type ServerAPI struct {
+	config     ServerConfig
+	rtspServer *rtsp.RTSPServer
+	streamMgr  *StreamManager
+	isRunning  bool
+	mu         sync.RWMutex
+	stopChan   chan struct{}
+}
+
+func NewServerAPI(config ServerConfig) *ServerAPI {
+	rtspAddr := fmt.Sprintf(":%d", config.RTSPPort)
+	server := rtsp.NewRTSPServer(rtspAddr)
+	streamMgr := NewStreamManager(server)
+
+	return &ServerAPI{
+		config:     config,
+		rtspServer: server,
+		streamMgr:  streamMgr,
+		isRunning:  false,
+		stopChan:   make(chan struct{}),
+	}
+}
+
+func (api *ServerAPI) Start() error {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+
+	if api.isRunning {
+		return fmt.Errorf("server is already running")
+	}
+
+	// Start RTSP server
+	err := api.rtspServer.Start()
+	if err != nil {
+		return fmt.Errorf("failed to start RTSP server: %v", err)
+	}
+
+	api.isRunning = true
+	utils.Info("Server started on RTSP port %d", api.config.RTSPPort)
+
+	return nil
+}
+
+func (api *ServerAPI) Stop() {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+
+	if !api.isRunning {
+		return
+	}
+
+	close(api.stopChan)
+
+	// Stop RTSP server
+	api.rtspServer.Stop()
+
+	api.isRunning = false
+	utils.Info("Server stopped")
+}
+
+func (api *ServerAPI) PushVideoStream(path string, data []byte, timestamp uint32, marker bool) error {
+	if !api.isRunning {
+		return fmt.Errorf("server is not running")
+	}
+
+	return api.streamMgr.PushVideoFrame(path, data, timestamp, marker)
+}
+
+func (api *ServerAPI) AddStream(path string) {
+	api.streamMgr.AddStream(path)
+}
+
+func (api *ServerAPI) RemoveStream(path string) {
+	api.streamMgr.RemoveStream(path)
+}
+
+func (api *ServerAPI) GetStreams() []StreamInfo {
+	return api.streamMgr.GetStreams()
+}
+
+func (api *ServerAPI) GetStreamInfo(path string) (*StreamInfo, bool) {
+	return api.streamMgr.GetStreamInfo(path)
+}
+func (api *ServerAPI) GetSessionCount(path string) int {
+	return api.streamMgr.server.GetSessionCount(path)
+}
+func (api *ServerAPI) GetAllSessionCount() int {
+	return api.streamMgr.server.GetAllSessionCount()
+}
