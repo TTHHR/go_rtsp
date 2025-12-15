@@ -13,6 +13,7 @@ import (
 
 	"github.com/tthhr/go_rtsp/api"
 	"github.com/tthhr/go_rtsp/net/rtp"
+	"github.com/tthhr/go_rtsp/net/rtsp"
 	"github.com/tthhr/go_rtsp/utils"
 )
 
@@ -33,13 +34,18 @@ var (
 
 //export InitRTSPServer
 func InitRTSPServer(port int) {
-	config := api.ServerConfig{
-		RTSPPort:   port,
-		BufferSize: 4 * 1024 * 1024,
-		MaxClients: 100,
+	config := rtsp.RTSPServerInitConfig{
+		Port:        port,           //rtsp协议监听端口
+		UdpEnable:   true,           //udp传输启用？
+		TcpEnable:   false,          //tcp传输启用？网络环境较差建议启用
+		ProtocolLog: true,           //rtsp协议交互过程是否打印
+		ServerName:  "THR's Server", //rtsp协议中显示的服务端名
 	}
 
-	serverInstance = api.NewServerAPI(config)
+	serverInstance, err := api.NewServerAPI(config)
+	if err != nil {
+		utils.Error("config err %v", err)
+	}
 	if err := serverInstance.Start(); err != nil {
 		utils.Error("Failed to start server: %s", err.Error())
 		return

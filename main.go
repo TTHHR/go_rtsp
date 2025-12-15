@@ -10,35 +10,39 @@ import (
 
 	"github.com/tthhr/go_rtsp/api"
 	"github.com/tthhr/go_rtsp/net/rtp"
+	"github.com/tthhr/go_rtsp/net/rtsp"
 	"github.com/tthhr/go_rtsp/utils"
 )
 
 func main() {
 	// Parse command line arguments
 	rtspPort := flag.Int("rtsp-port", 8554, "RTSP server port")
-	bufferSize := flag.Int("buffer", 1024*1024, "Buffer size in bytes")
-	maxClients := flag.Int("max-clients", 100, "Maximum number of clients")
 	filePath := flag.String("h265-file", "", "h265 file path")
 	flag.Parse()
 	// Create server configuration
-	config := api.ServerConfig{
-		RTSPPort:   *rtspPort,
-		BufferSize: *bufferSize,
-		MaxClients: *maxClients,
+	config := rtsp.RTSPServerInitConfig{
+		Port:        *rtspPort,      //rtsp协议监听端口
+		UdpEnable:   true,           //udp传输启用？
+		TcpEnable:   false,          //tcp传输启用？网络环境较差建议启用
+		ProtocolLog: true,           //rtsp协议交互过程是否打印
+		ServerName:  "THR's Server", //rtsp协议中显示的服务端名
 	}
 
 	// Create and start server
-	server := api.NewServerAPI(config)
+	server, err := api.NewServerAPI(config)
+	if err != nil {
+		utils.Error("config err ,%v", err)
+		os.Exit(1)
+	}
 
 	if err := server.Start(); err != nil {
 		utils.Error("Failed to start server:%s", err.Error())
 		os.Exit(1)
 	}
 
-	// Add some example streams
-	server.AddStream("test")
 	if *filePath != "" {
-		go simulateVideoStream(server, "test", *filePath)
+		server.AddStream("filetest")
+		go simulateVideoFileStream(server, "filetest", *filePath)
 	}
 
 	// Wait for interrupt signal
@@ -54,7 +58,7 @@ func main() {
 	utils.Info("Server stopped")
 }
 
-func simulateVideoStream(server *api.ServerAPI, path string, filepath string) {
+func simulateVideoFileStream(server *api.ServerAPI, path string, filepath string) {
 	reader, err := utils.NewH265FileReader(filepath)
 	if err != nil {
 		utils.Error("Failed to open file: %s", err.Error())

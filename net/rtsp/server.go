@@ -11,9 +11,21 @@ import (
 	"github.com/tthhr/go_rtsp/utils"
 )
 
+type RTSPServerInitConfig struct {
+	Port        int
+	ProtocolLog bool
+	TcpEnable   bool
+	UdpEnable   bool
+	ServerName  string
+}
+
 type RTSPServer struct {
 	availablePaths map[string]string
 	address        string
+	protocolLog    bool
+	tcpEnable      bool
+	udpEnable      bool
+	serverName     string
 	tcpServer      *transport.TCPServer
 	sessions       map[string]*StreamSession
 	sessionByCSeq  map[int]string
@@ -40,14 +52,21 @@ func (s *RTSPServer) GetAllSessionCount() int {
 	return len(s.sessions)
 }
 
-func NewRTSPServer(addr string) *RTSPServer {
+func NewRTSPServer(config RTSPServerInitConfig) (*RTSPServer, error) {
+	if !config.UdpEnable && !config.TcpEnable {
+		return nil, fmt.Errorf("err tcp & udp all disable")
+	}
 	return &RTSPServer{
 		availablePaths: make(map[string]string),
-		address:        addr,
+		address:        fmt.Sprintf(":%d", config.Port),
+		protocolLog:    config.ProtocolLog,
+		tcpEnable:      config.TcpEnable,
+		udpEnable:      config.UdpEnable,
+		serverName:     config.ServerName,
 		sessions:       make(map[string]*StreamSession),
 		sessionByCSeq:  make(map[int]string),
 		nextCSeq:       1,
-	}
+	}, nil
 }
 
 func (s *RTSPServer) Start() error {
@@ -119,7 +138,9 @@ func (s *RTSPServer) handleRTSPConnection(conn net.Conn) {
 		}
 
 		requestData := requestBuilder.String()
-		//utils.Debug("Received request:\n%s", requestData)
+		if s.protocolLog {
+			utils.Debug("Received request:\n%s", requestData)
+		}
 
 		// Parse request
 		req := ParseRTSPRequest(requestData)
@@ -163,7 +184,10 @@ func (s *RTSPServer) handleRTSPConnection(conn net.Conn) {
 		}
 
 		// Send response
-		//utils.Debug("Sending response:\n%s", response)
+		if s.protocolLog {
+			utils.Debug("Sending response:\n%s", response)
+		}
+
 		conn.Write([]byte(response))
 	}
 }
@@ -172,7 +196,7 @@ func (s *RTSPServer) handleOptions(req *RTSPRequest, cseq int) string {
 	headers := map[string]string{
 		"CSeq":   fmt.Sprintf("%d", cseq),
 		"Public": "OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, ANNOUNCE, RECORD",
-		"Server": "Go-RTSP-Server",
+		"Server": s.serverName,
 	}
 	return BuildRTSPResponse(200, "OK", headers, "")
 }
@@ -188,7 +212,7 @@ func (s *RTSPServer) handleDescribe(req *RTSPRequest, cseq int) string {
 		utils.Warn("Stream not found: %s", streamPath)
 		headers := map[string]string{
 			"CSeq":   fmt.Sprintf("%d", cseq),
-			"Server": "Go-RTSP-Server",
+			"Server": s.serverName,
 		}
 		return BuildRTSPResponse(404, "Not Found", headers, "")
 	}
@@ -205,8 +229,7 @@ func (s *RTSPServer) handleDescribe(req *RTSPRequest, cseq int) string {
 		"CSeq":         fmt.Sprintf("%d", cseq),
 		"Content-Base": req.URL + "/",
 		"Content-Type": "application/sdp",
-		// "Content-Length": fmt.Sprintf("%d", len(sdp)),
-		"Server": "Go-RTSP-Server",
+		"Server":       s.serverName,
 	}
 
 	return BuildRTSPResponse(200, "OK", headers, sdp)
@@ -221,28 +244,30 @@ func (s *RTSPServer) handleSetup(req *RTSPRequest, cseq int, conn net.Conn) (str
 	var session *StreamSession
 	var ok bool
 
-	utils.Debug("setup sessionid %s", sessionID)
-
 	// Use existing session
 	session, ok = s.sessions[sessionID]
 	if !ok {
 		headers := map[string]string{
 			"CSeq":   fmt.Sprintf("%d", cseq),
-			"Server": "Go-RTSP-Server",
+			"Server": s.serverName,
 		}
 		return BuildRTSPResponse(454, "Session Not Found", headers, ""), nil
 	}
 
 	// Parse transport
 	transport := req.Transport
-	if transport == "" {
-		transport = "RTP/AVP/UDP"
-	}
 
 	// Parse client ports from transport header
 	mode, tcpOrUdp, clientRTPPort, clientRTCPPort, _, _, _, err := utils.ParseTransport(transport)
 	if err != nil {
 		utils.Error("ParseTransport fail %s", err.Error())
+	}
+	if (tcpOrUdp && !s.tcpEnable) || (!tcpOrUdp && !s.udpEnable) {
+		headers := map[string]string{
+			"CSeq":   fmt.Sprintf("%d", cseq),
+			"Server": s.serverName,
+		}
+		return BuildRTSPResponse(405, "Method Not Support", headers, ""), nil
 	}
 	session.isTcp = tcpOrUdp
 	// Setup transport
@@ -264,7 +289,7 @@ func (s *RTSPServer) handleSetup(req *RTSPRequest, cseq int, conn net.Conn) (str
 		utils.Error("SetupTransport error: %s", err.Error())
 		headers := map[string]string{
 			"CSeq":   fmt.Sprintf("%d", cseq),
-			"Server": "Go-RTSP-Server",
+			"Server": s.serverName,
 		}
 		return BuildRTSPResponse(500, "Internal Server Error", headers, ""), nil
 	}
@@ -282,7 +307,7 @@ func (s *RTSPServer) handleSetup(req *RTSPRequest, cseq int, conn net.Conn) (str
 		"CSeq":      fmt.Sprintf("%d", cseq),
 		"Session":   sessionID + ";timeout=60",
 		"Transport": transportResponse,
-		"Server":    "Go-RTSP-Server",
+		"Server":    s.serverName,
 	}
 
 	session.State = "ready"
@@ -295,7 +320,7 @@ func (s *RTSPServer) handlePlay(req *RTSPRequest, cseq int, session *StreamSessi
 	if session == nil {
 		headers := map[string]string{
 			"CSeq":   fmt.Sprintf("%d", cseq),
-			"Server": "Go-RTSP-Server",
+			"Server": s.serverName,
 		}
 		return BuildRTSPResponse(454, "Session Not Found", headers, "")
 	}
@@ -308,7 +333,7 @@ func (s *RTSPServer) handlePlay(req *RTSPRequest, cseq int, session *StreamSessi
 		"Session": session.SessionID,
 		"Range":   "npt=0.000-",
 		//"RTP-Info": fmt.Sprintf("url=%s;seq=1", req.URL),
-		"Server": "Go-RTSP-Server",
+		"Server": s.serverName,
 	}
 
 	return BuildRTSPResponse(200, "OK", headers, "")
@@ -323,7 +348,7 @@ func (s *RTSPServer) handleTeardown(req *RTSPRequest, cseq int, session *StreamS
 	headers := map[string]string{
 		"CSeq":    fmt.Sprintf("%d", cseq),
 		"Session": req.Session,
-		"Server":  "Go-RTSP-Server",
+		"Server":  s.serverName,
 	}
 
 	return BuildRTSPResponse(200, "OK", headers, "")
@@ -333,7 +358,7 @@ func (s *RTSPServer) handleAnnounce(req *RTSPRequest, cseq int, body string) str
 	// Announce is used to push SDP to server
 	headers := map[string]string{
 		"CSeq":   fmt.Sprintf("%d", cseq),
-		"Server": "Go-RTSP-Server",
+		"Server": s.serverName,
 	}
 	return BuildRTSPResponse(200, "OK", headers, "")
 }
@@ -342,7 +367,7 @@ func (s *RTSPServer) handleRecord(req *RTSPRequest, cseq int, session *StreamSes
 	if session == nil {
 		headers := map[string]string{
 			"CSeq":   fmt.Sprintf("%d", cseq),
-			"Server": "Go-RTSP-Server",
+			"Server": s.serverName,
 		}
 		return BuildRTSPResponse(454, "Session Not Found", headers, "")
 	}
@@ -353,7 +378,7 @@ func (s *RTSPServer) handleRecord(req *RTSPRequest, cseq int, session *StreamSes
 	headers := map[string]string{
 		"CSeq":    fmt.Sprintf("%d", cseq),
 		"Session": session.SessionID,
-		"Server":  "Go-RTSP-Server",
+		"Server":  s.serverName,
 	}
 
 	return BuildRTSPResponse(200, "OK", headers, "")

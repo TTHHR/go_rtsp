@@ -8,14 +8,8 @@ import (
 	"github.com/tthhr/go_rtsp/utils"
 )
 
-type ServerConfig struct {
-	RTSPPort   int
-	BufferSize int
-	MaxClients int
-}
-
 type ServerAPI struct {
-	config     ServerConfig
+	config     rtsp.RTSPServerInitConfig
 	rtspServer *rtsp.RTSPServer
 	streamMgr  *StreamManager
 	isRunning  bool
@@ -23,9 +17,11 @@ type ServerAPI struct {
 	stopChan   chan struct{}
 }
 
-func NewServerAPI(config ServerConfig) *ServerAPI {
-	rtspAddr := fmt.Sprintf(":%d", config.RTSPPort)
-	server := rtsp.NewRTSPServer(rtspAddr)
+func NewServerAPI(config rtsp.RTSPServerInitConfig) (*ServerAPI, error) {
+	server, err := rtsp.NewRTSPServer(config)
+	if err != nil {
+		return nil, err
+	}
 	streamMgr := NewStreamManager(server)
 
 	return &ServerAPI{
@@ -34,7 +30,7 @@ func NewServerAPI(config ServerConfig) *ServerAPI {
 		streamMgr:  streamMgr,
 		isRunning:  false,
 		stopChan:   make(chan struct{}),
-	}
+	}, nil
 }
 
 func (api *ServerAPI) Start() error {
@@ -52,7 +48,7 @@ func (api *ServerAPI) Start() error {
 	}
 
 	api.isRunning = true
-	utils.Info("Server started on RTSP port %d", api.config.RTSPPort)
+	utils.Info("Server started ")
 
 	return nil
 }
