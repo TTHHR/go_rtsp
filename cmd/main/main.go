@@ -21,11 +21,13 @@ func main() {
 	flag.Parse()
 	// Create server configuration
 	config := rtsp.RTSPServerInitConfig{
-		Port:        *rtspPort,      //rtsp协议监听端口
-		UdpEnable:   true,           //udp传输启用？
-		TcpEnable:   false,          //tcp传输启用？网络环境较差建议启用
-		ProtocolLog: true,           //rtsp协议交互过程是否打印
-		ServerName:  "THR's Server", //rtsp协议中显示的服务端名
+		Port:        *rtspPort,               //rtsp协议监听端口
+		UdpEnable:   true,                    //udp传输启用？
+		TcpEnable:   false,                   //tcp传输启用？网络环境较差建议启用
+		ProtocolLog: true,                    //rtsp协议交互过程是否打印
+		MaxClient:   1,                       //最大客户端数量
+		MaxAction:   rtsp.StrategyKickOldest, //客户端满了之后的动作
+		ServerName:  "THR's Server",          //rtsp协议中显示的服务端名
 	}
 
 	// Create and start server
@@ -44,7 +46,6 @@ func main() {
 		server.AddStream("filetest")
 		go simulateVideoFileStream(server, "filetest", *filePath)
 	}
-
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)

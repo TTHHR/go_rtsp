@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -9,19 +10,15 @@ import (
 )
 
 type StreamInfo struct {
-	Path         string
-	SessionCount int
-	CreatedAt    time.Time
-	LastFrameAt  time.Time
-	FrameCount   uint64
-	Bitrate      float64 // kbps
+	Path        string
+	CreatedAt   time.Time
+	lastFrameAt time.Time
 }
 
 type StreamManager struct {
-	server         *rtsp.RTSPServer
-	streams        map[string]*StreamInfo
-	mu             sync.RWMutex
-	frameCallbacks []func(path string, data []byte)
+	server  *rtsp.RTSPServer
+	streams map[string]*StreamInfo
+	mu      sync.RWMutex
 }
 
 func NewStreamManager(server *rtsp.RTSPServer) *StreamManager {
@@ -37,8 +34,9 @@ func (m *StreamManager) AddStream(path string) {
 
 	if _, exists := m.streams[path]; !exists {
 		m.streams[path] = &StreamInfo{
-			Path:      path,
-			CreatedAt: time.Now(),
+			Path:        path,
+			CreatedAt:   time.Now(),
+			lastFrameAt: time.Now(),
 		}
 		m.server.AddPath(path)
 		utils.Info("Stream added: %s", path)
@@ -56,24 +54,16 @@ func (m *StreamManager) RemoveStream(path string) {
 
 func (m *StreamManager) PushVideoFrame(path string, data []byte, timestamp uint32, marker bool) error {
 	m.mu.Lock()
-
 	// Update stream info
-	info, exists := m.streams[path]
-	if !exists {
-		info = &StreamInfo{
-			Path:      path,
-			CreatedAt: time.Now(),
-		}
-		m.streams[path] = info
-	}
-
-	info.LastFrameAt = time.Now()
-	info.FrameCount++
-
+	_, exists := m.streams[path]
 	m.mu.Unlock()
 
-	// Push to RTSP server
-	return m.server.PushVideoFrame(path, data, timestamp, marker)
+	if !exists {
+		return fmt.Errorf("target path not exist")
+	}
+
+	err := m.server.PushVideoFrame(path, data, timestamp, marker)
+	return err
 }
 
 func (m *StreamManager) GetStreams() []StreamInfo {

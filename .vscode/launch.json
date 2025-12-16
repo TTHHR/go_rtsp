@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug main program",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/main",
+            "args": [
+                "--h265-file",
+                "/mnt/d/dvr/test.h265"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug export tool",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/export",
+            "console": "integratedTerminal"
+        }
+    ]
+}

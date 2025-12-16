@@ -22,9 +22,9 @@ export PKG_CONFIG_PATH=${BR2_SYSROOT}/usr/lib/pkgconfig
 mkdir -p bin/arm64
 
 echo "Building Executable (go_rtsp)..."
-go build -o bin/arm64/go_rtsp main.go
+go build -o bin/arm64/go_rtsp cmd/main/main.go
 
 echo "Building Shared Library (libgortsp.so)..."
-go build -buildmode=c-shared -o bin/arm64/libgortsp.so export.go
+go build -buildmode=c-shared -o bin/arm64/libgortsp.so cmd/export/export.go
 
 echo "Done."

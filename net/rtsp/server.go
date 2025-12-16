@@ -11,12 +11,22 @@ import (
 	"github.com/tthhr/go_rtsp/utils"
 )
 
+type LimitStrategy int
+
+const (
+	StrategyReject     LimitStrategy = iota // 0: 直接拒绝
+	StrategyKickOldest                      // 1: 踢出最旧的
+	StrategyIgnore                          // 2: 忽略限制（强行加入）
+)
+
 type RTSPServerInitConfig struct {
 	Port        int
 	ProtocolLog bool
 	TcpEnable   bool
 	UdpEnable   bool
 	ServerName  string
+	MaxClient   int           //最大客户端数量
+	MaxAction   LimitStrategy //客户端满了之后的动作
 }
 
 type RTSPServer struct {
@@ -26,9 +36,11 @@ type RTSPServer struct {
 	tcpEnable      bool
 	udpEnable      bool
 	serverName     string
+	maxClient      int           //最大客户端数量
+	maxAction      LimitStrategy //客户端满了之后的动作
 	tcpServer      *transport.TCPServer
 	sessions       map[string]*StreamSession
-	sessionByCSeq  map[int]string
+	sessionCounts  map[string]int
 	mu             sync.RWMutex
 	nextCSeq       int
 }
@@ -63,8 +75,10 @@ func NewRTSPServer(config RTSPServerInitConfig) (*RTSPServer, error) {
 		tcpEnable:      config.TcpEnable,
 		udpEnable:      config.UdpEnable,
 		serverName:     config.ServerName,
+		maxClient:      config.MaxClient,
+		maxAction:      config.MaxAction,
 		sessions:       make(map[string]*StreamSession),
-		sessionByCSeq:  make(map[int]string),
+		sessionCounts:  make(map[string]int),
 		nextCSeq:       1,
 	}, nil
 }
@@ -202,8 +216,8 @@ func (s *RTSPServer) handleOptions(req *RTSPRequest, cseq int) string {
 }
 
 func (s *RTSPServer) handleDescribe(req *RTSPRequest, cseq int) string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	// Extract stream path from URL
 	streamPath := extractStreamPath(req.URL)
@@ -216,6 +230,25 @@ func (s *RTSPServer) handleDescribe(req *RTSPRequest, cseq int) string {
 		}
 		return BuildRTSPResponse(404, "Not Found", headers, "")
 	}
+	if s.sessionCounts[streamPath] >= s.maxClient {
+		utils.Warn("Stream max: %s", streamPath)
+		switch s.maxAction {
+		case StrategyReject:
+			headers := map[string]string{
+				"CSeq":   fmt.Sprintf("%d", cseq),
+				"Server": s.serverName,
+			}
+			return BuildRTSPResponse(404, "Not Found", headers, "")
+		case StrategyIgnore:
+			utils.Info("allow client enter")
+		case StrategyKickOldest:
+			session, found := s.GetOldestSessionByPath(streamPath)
+			if found && session != nil {
+				session.NeedClose = true
+			}
+		}
+
+	}
 
 	// Create a temporary session for SDP generation
 	tempSession := NewStreamSession(streamPath)
@@ -224,6 +257,7 @@ func (s *RTSPServer) handleDescribe(req *RTSPRequest, cseq int) string {
 
 	sdp := tempSession.GetSDP()
 	s.sessions[tempSession.SessionID] = tempSession
+	s.sessionCounts[streamPath]++
 
 	headers := map[string]string{
 		"CSeq":         fmt.Sprintf("%d", cseq),
@@ -387,14 +421,8 @@ func (s *RTSPServer) handleRecord(req *RTSPRequest, cseq int, session *StreamSes
 func (s *RTSPServer) removeSession(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
+	s.sessionCounts[s.sessions[sessionID].StreamPath]--
 	delete(s.sessions, sessionID)
-	// Also remove from CSeq map
-	for cseq, sid := range s.sessionByCSeq {
-		if sid == sessionID {
-			delete(s.sessionByCSeq, cseq)
-		}
-	}
 }
 
 func (s *RTSPServer) PushVideoFrame(streamPath string, data []byte, timestamp uint32, marker bool) error {
@@ -406,6 +434,10 @@ func (s *RTSPServer) PushVideoFrame(streamPath string, data []byte, timestamp ui
 		if strings.HasPrefix(session.StreamPath, streamPath) && session.State == "playing" {
 			//go session.SendRTPPacket(data, timestamp, marker)
 			session.SendRTPPacket(data, timestamp, marker)
+			if session.NeedClose && session.RTSPConn != nil {
+				utils.Info("session %s close", session.SessionID)
+				session.RTSPConn.Close()
+			}
 		}
 	}
 

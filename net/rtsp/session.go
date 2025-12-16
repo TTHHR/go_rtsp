@@ -36,6 +36,7 @@ type StreamSession struct {
 	RTPSender     *rtp.RTPSender
 
 	LastActive time.Time
+	NeedClose  bool
 	Sequence   uint16
 	mu         sync.RWMutex
 }
@@ -179,4 +180,23 @@ a=control:streamid=%s
 `, s.ServerRTPPort, s.SessionID)
 
 	return sdp
+}
+
+func (s *RTSPServer) GetOldestSessionByPath(streamPath string) (*StreamSession, bool) {
+
+	var oldestSession *StreamSession
+	var oldestTime time.Time
+	found := false
+
+	for _, session := range s.sessions {
+		if session.StreamPath == streamPath {
+			if !found || session.LastActive.Before(oldestTime) {
+				oldestSession = session
+				oldestTime = session.LastActive
+				found = true
+			}
+		}
+	}
+
+	return oldestSession, found
 }
