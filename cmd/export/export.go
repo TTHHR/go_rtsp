@@ -35,14 +35,16 @@ var (
 //export InitRTSPServer
 func InitRTSPServer(port int) {
 	config := rtsp.RTSPServerInitConfig{
-		Port:        port,           //rtsp协议监听端口
-		UdpEnable:   true,           //udp传输启用？
-		TcpEnable:   false,          //tcp传输启用？网络环境较差建议启用
-		ProtocolLog: true,           //rtsp协议交互过程是否打印
-		ServerName:  "THR's Server", //rtsp协议中显示的服务端名
+		Port:        port,                    //rtsp协议监听端口
+		UdpEnable:   true,                    //udp传输启用？
+		TcpEnable:   false,                   //tcp传输启用？网络环境较差建议启用
+		ProtocolLog: true,                    //rtsp协议交互过程是否打印
+		MaxClient:   2,                       //最大客户端数量
+		MaxAction:   rtsp.StrategyKickOldest, //客户端满了之后的动作
+		ServerName:  "THR's Server",          //rtsp协议中显示的服务端名
 	}
-
-	serverInstance, err := api.NewServerAPI(config)
+	var err error
+	serverInstance, err = api.NewServerAPI(config)
 	if err != nil {
 		utils.Error("config err %v", err)
 	}
@@ -59,12 +61,12 @@ func InitRTSPServer(port int) {
 //export AddStream
 func AddStream(path *C.uchar, length C.int) {
 	if serverInstance == nil {
+		utils.Error("!!rtsp not init!!")
 		return
 	}
 
 	// 1. 转换 C 字符串到 Go 字符串
 	goPath := C.GoStringN((*C.char)(unsafe.Pointer(path)), length)
-
 	streamsMu.Lock()
 	defer streamsMu.Unlock()
 

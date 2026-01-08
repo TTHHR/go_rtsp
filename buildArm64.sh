@@ -25,6 +25,6 @@ echo "Building Executable (go_rtsp)..."
 go build -o bin/arm64/go_rtsp cmd/main/main.go
 
 echo "Building Shared Library (libgortsp.so)..."
-go build -buildmode=c-shared -o bin/arm64/libgortsp.so cmd/export/export.go
+go build -buildmode=c-shared -ldflags '-extldflags "-Wl,-soname,libgortsp.so"' -o bin/arm64/libgortsp.so cmd/export/export.go
 
 echo "Done."
