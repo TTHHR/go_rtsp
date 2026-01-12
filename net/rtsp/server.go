@@ -421,8 +421,20 @@ func (s *RTSPServer) handleRecord(req *RTSPRequest, cseq int, session *StreamSes
 func (s *RTSPServer) removeSession(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sessionCounts[s.sessions[sessionID].StreamPath]--
-	delete(s.sessions, sessionID)
+	if sess, ok := s.sessions[sessionID]; ok {
+		// 获取该 session 对应的路径
+		path := sess.StreamPath
+
+		if s.sessionCounts[path] > 0 {
+			s.sessionCounts[path]--
+		} else {
+			utils.Warn("Session count for %s is already 0, logic error?", path)
+			s.sessionCounts[path] = 0
+		}
+		//  从 map 中彻底删除
+		delete(s.sessions, sessionID)
+		utils.Info("Session removed: %s, remaining count: %d", sessionID, s.sessionCounts[path])
+	}
 }
 
 func (s *RTSPServer) PushVideoFrame(streamPath string, data []byte, timestamp uint32, marker bool) error {
