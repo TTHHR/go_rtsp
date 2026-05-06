@@ -442,10 +442,15 @@ func (s *RTSPServer) PushVideoFrame(streamPath string, data []byte, timestamp ui
 	defer s.mu.RUnlock()
 
 	// Find all sessions for this stream path
+	var sendErr error
 	for _, session := range s.sessions {
 		if strings.HasPrefix(session.StreamPath, streamPath) && session.State == "playing" {
 			//go session.SendRTPPacket(data, timestamp, marker)
-			session.SendRTPPacket(data, timestamp, marker)
+			if err := session.SendRTPPacket(data, timestamp, marker); err != nil {
+				utils.Error("send rtp failed: session=%s path=%s ts=%d marker=%v err=%v",
+					session.SessionID, streamPath, timestamp, marker, err)
+				sendErr = err
+			}
 			if session.NeedClose && session.RTSPConn != nil {
 				utils.Info("session %s close", session.SessionID)
 				session.RTSPConn.Close()
@@ -453,7 +458,7 @@ func (s *RTSPServer) PushVideoFrame(streamPath string, data []byte, timestamp ui
 		}
 	}
 
-	return nil
+	return sendErr
 }
 
 func extractStreamPath(url string) string {

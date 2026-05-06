@@ -7,6 +7,8 @@ package main
 import "C"
 
 import (
+	"os"
+	"strconv"
 	"sync"
 	"time"
 	"unsafe"
@@ -26,18 +28,56 @@ type StreamContext struct {
 	Mutex      sync.Mutex // 保护该流的内部状态
 }
 
+type ExportRuntimeOptions struct {
+	PaceInterval time.Duration
+	LogLargeAU   int
+}
+
 var (
 	serverInstance *api.ServerAPI
 	streams        map[string]*StreamContext
 	streamsMu      sync.RWMutex
+	runtimeOptions ExportRuntimeOptions
 )
+
+func getEnvInt(name string, fallback int) int {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		utils.Warn("invalid env %s=%q, fallback=%d", name, value, fallback)
+		return fallback
+	}
+	return parsed
+}
+
+func loadRuntimeOptions() ExportRuntimeOptions {
+	paceUs := getEnvInt("GO_RTSP_PACE_US", 250)
+	if paceUs < 0 {
+		paceUs = 0
+	}
+
+	logLargeAU := getEnvInt("GO_RTSP_LOG_LARGE_AU", 32768)
+	if logLargeAU < 0 {
+		logLargeAU = 0
+	}
+
+	return ExportRuntimeOptions{
+		PaceInterval: time.Duration(paceUs) * time.Microsecond,
+		LogLargeAU:   logLargeAU,
+	}
+}
 
 //export InitRTSPServer
 func InitRTSPServer(port int) {
+	runtimeOptions = loadRuntimeOptions()
 	config := rtsp.RTSPServerInitConfig{
 		Port:        port,                    //rtsp协议监听端口
 		UdpEnable:   true,                    //udp传输启用？
-		TcpEnable:   false,                   //tcp传输启用？网络环境较差建议启用
+		TcpEnable:   true,                   //tcp传输启用？网络环境较差建议启用
 		ProtocolLog: true,                    //rtsp协议交互过程是否打印
 		MaxClient:   2,                       //最大客户端数量
 		MaxAction:   rtsp.StrategyKickOldest, //客户端满了之后的动作
@@ -56,6 +96,7 @@ func InitRTSPServer(port int) {
 	// 初始化流映射表
 	streams = make(map[string]*StreamContext)
 	utils.Info("RTSP Server initialized on port %d", port)
+	utils.Info("go_rtsp runtime: pace=%s log_large_au=%d", runtimeOptions.PaceInterval, runtimeOptions.LogLargeAU)
 }
 
 //export AddStream
@@ -162,10 +203,19 @@ func (ctx *StreamContext) processAndSendNALU(data []byte, ts uint32, isLastNALU 
 func (ctx *StreamContext) sendInternal(data []byte, ts uint32, useMarker bool) {
 	// 使用 Context 自己的打包器
 	packets := ctx.Packetizer.PacketizeH265NALU(data, ts)
+	if len(packets) == 0 {
+		return
+	}
 
 	fullPath := ctx.Path
+	nalType := (data[0] >> 1) & 0x3F
 
-	if !useMarker && len(packets) > 0 {
+	if runtimeOptions.LogLargeAU > 0 && len(data) >= runtimeOptions.LogLargeAU {
+		utils.Warn("large h265 access unit: path=%s nal_type=%d size=%d packets=%d ts=%d marker=%v",
+			fullPath, nalType, len(data), len(packets), ts, useMarker)
+	}
+
+	if !useMarker {
 		lastIdx := len(packets) - 1
 		packets[lastIdx][1] &= 0x7F
 	}
@@ -174,10 +224,14 @@ func (ctx *StreamContext) sendInternal(data []byte, ts uint32, useMarker bool) {
 		isMarkerPacket := (i == len(packets)-1) && useMarker
 
 		// 调用 ServerAPI 推流
-		serverInstance.PushVideoStream(fullPath, pkt, ts, isMarkerPacket)
+		if err := serverInstance.PushVideoStream(fullPath, pkt, ts, isMarkerPacket); err != nil {
+			utils.Error("push video packet failed: path=%s nal_type=%d packet=%d/%d size=%d ts=%d err=%v",
+				fullPath, nalType, i+1, len(packets), len(pkt), ts, err)
+		}
 
-		// 简单的 Pacing
-		time.Sleep(1 * time.Microsecond)
+		if runtimeOptions.PaceInterval > 0 {
+			time.Sleep(runtimeOptions.PaceInterval)
+		}
 	}
 }
 

@@ -124,7 +124,7 @@ func (s *StreamSession) SendRTPPacket(data []byte, timestamp uint32, marker bool
 	}
 
 	if s.isTcp && s.RTSPConn != nil {
-		interleavedData := s.buildInterleavedPacket(data, s.RTCPChannel)
+		interleavedData := s.buildInterleavedPacket(data, s.RTPChannel)
 		_, err := s.RTSPConn.Write(interleavedData)
 		return err
 	} else if s.RTPSender != nil && s.ClientAddr != nil {
